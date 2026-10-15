@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MiniCraft - voxel game</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Courier New', monospace; }
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 8px;
+            pointer-events: none;
+            user-select: none;
+            font-size: 14px;
+            border: 1px solid #8b8b8b;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            transform: translate(-50%, -50%);
+            border: 2px solid white;
+            border-radius: 50%;
+            opacity: 0.7;
+            pointer-events: none;
+            box-shadow: 0 0 5px black;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">MiniCraft | Left click: break | Right click: place | WASD: move | Space: jump | Mouse: look</div>
+    <div id="crosshair"></div>
+
+    <!-- Import Three.js and PointerLockControls from CDN -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.128.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        // --- Setup scene, camera, renderer ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); // Sky blue
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 5, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true; // Not heavily used but nice
+        document.body.appendChild(renderer.domElement);
+
+        // --- Controls (pointer lock) ---
+        const controls = new PointerLockControls(camera, renderer.domElement);
+        scene.add(controls.getObject()); // The camera is the object
+
+        // Click to lock pointer
+        renderer.domElement.addEventListener('click', () => {
+            controls.lock();
+        });
+
+        // --- Lighting ---
+        // Ambient light for base illumination
+        const ambientLight = new THREE.AmbientLight(0x404060);
+        scene.add(ambientLight);
+
+        // Directional light (simulating sun)
+        const sunLight = new THREE.DirectionalLight(0xffffff, 1);
+        sunLight.position.set(10, 20, 5);
+        sunLight.castShadow = true;
+        sunLight.receiveShadow = true;
+        scene.add(sunLight);
+
+        // Fill light from opposite side
+        const fillLight = new THREE.DirectionalLight(0xffeedd, 0.4);
+        fillLight.position.set(-10, 5, -10);
+        scene.add(fillLight);
+
+        // --- World generation parameters ---
+        const WORLD_SIZE = 24;      // 24x24 grid of blocks
+        const BLOCK_SIZE = 1;
+        const GROUND_LEVEL = 0;     // y=0 is the base ground level
+
+        // Materials for different block types
+        const materials = {
+            grass: new THREE.MeshLambertMaterial({ color: 0x7CFC00 }), // lawn green
+            dirt: new THREE.MeshLambertMaterial({ color: 0x8B4513 }),
+            stone: new THREE.MeshLambertMaterial({ color: 0x808080 }),
+            wood: new THREE.MeshLambertMaterial({ color: 0x8B5A2B }),
+            leaves: new THREE.MeshLambertMaterial({ color: 0x228B22 }),
+            sand: new THREE.MeshLambertMaterial({ color: 0xF4E4A6 }),
+            brick: new THREE.MeshLambertMaterial({ color: 0xB22222 })
+        };
+
+        // Store blocks in a map for easy access and modification: key = "x,y,z"
+        const blocks = new Map();
+
+        // Helper to get key
+        function key(x, y, z) {
+            return `${x},${y},${z}`;
+        }
+
+        // Add block to scene and map
+        function addBlock(x, y, z, material, castShadow = true) {
+            const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+            const cube = new THREE.Mesh(geometry, material);
+            cube.position.set(x, y, z);
+            cube.castShadow = castShadow;
+            cube.receiveShadow = true;
+            scene.add(cube);
+            
+            const k = key(x, y, z);
+            blocks.set(k, cube);
+            return cube;
+        }
+
+        // Remove block by coordinates
+        function removeBlock(x, y, z) {
+            const k = key(x, y, z);
+            const cube = blocks.get(k);
+            if (cube) {
+                scene.remove(cube);
+                blocks.delete(k);
+                // Dispose geometry and material? not necessary for simple game but good practice
+                cube.geometry.dispose();
+                // We don't dispose material because it's shared
+            }
+        }
+
+        // --- Generate the world (similar to Minecraft but simple) ---
+        // Ground layer: y=0 mostly grass with some dirt/stone variations, plus a few hills/trees
+
+        // 1. Base terrain: simple flat with slight variations and a hill
+        for (let x = -WORLD_SIZE/2; x <= WORLD_SIZE/2; x++) {
+            for (let z = -WORLD_SIZE/2; z <= WORLD_SIZE/2; z++) {
+                // Base ground at y=0
+                let material = materials.grass;
+                
+                // Some random variation: dirt patches
+                if (Math.random() < 0.1) material = materials.dirt;
+                if (Math.random() < 0.05) material = materials.stone;
+                
+                addBlock(x, 0, z, material, true);
+                
+                // Add some sand near edges? Just for fun
+                if (Math.abs(x) > WORLD_SIZE/2 - 2 || Math.abs(z) > WORLD_SIZE/2 - 2) {
+                    if (Math.random() < 0.3) {
+                        removeBlock(x, 0, z);
+                        addBlock(x, 0, z, materials.sand);
+                    }
+                }
+            }
+        }
+
+        // 2. Add a small hill (2 blocks high) in one area
+        const hillCenterX = 5;
+        const hillCenterZ = -3;
+        for (let dx = -2; dx <= 2; dx++) {
+            for (let dz = -2; dz <= 2; dz++) {
+                const dist = Math.sqrt(dx*dx + dz*dz);
+                if (dist < 2.5) {
+                    // Place a block at y=1 on top of existing ground
+                    const x = hillCenterX + dx;
+                    const z = hillCenterZ + dz;
+                    // Check if ground exists at y=0, then add block at y=1
+                    if (blocks.has(key(x, 0, z))) {
+                        // Use grass or dirt depending on randomness
+                        const mat = Math.random() < 0.7 ? materials.grass : materials.dirt;
+                        addBlock(x, 1, z, mat, true);
+                        // Add a second layer for the peak
+                        if (dist < 1.5) {
+                            addBlock(x, 2, z, materials.grass, true);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Add a few trees
+        function createTree(baseX, baseZ) {
+            // Check if ground exists at base
+            if (!blocks.has(key(baseX, 0, baseZ))) return;
+            
+            // Trunk (wood) - 3 blocks high
+            for (let y = 1; y <= 3; y++) {
+                // Don't place if already occupied? but likely empty
+                if (!blocks.has(key(baseX, y, baseZ))) {
+                    addBlock(baseX, y, baseZ, materials.wood, true);
+                }
+            }
+            
+            // Leaves - a simple canopy: 3x3 layer at y=3, plus a smaller layer at y=4
+            const leafPositions = [
+                // y=3
+                [baseX-1, 3, baseZ-1], [baseX, 3, baseZ-1], [baseX+1, 3, baseZ-1],
+                [baseX-1, 3, baseZ],   [baseX, 3, baseZ],   [baseX+1, 3, baseZ],
+                [baseX-1, 3, baseZ+1], [baseX, 3, baseZ+1], [baseX+1, 3, baseZ+1],
+                // y=4
+                [baseX-1, 4, baseZ], [baseX, 4, baseZ], [baseX+1, 4, baseZ],
+                [baseX, 4, baseZ-1], [baseX, 4, baseZ+1]
+            ];
+            
+            leafPositions.forEach(([x, y, z]) => {
+                if (!blocks.has(key(x, y, z))) {
+                    addBlock(x, y, z, materials.leaves, true);
+                }
+            });
+            
+            // Top leaf
+            if (!blocks.has(key(baseX, 5, baseZ))) {
+                addBlock(baseX, 5, baseZ, materials.leaves, true);
+            }
+        }
+
+        // Place some trees at fixed positions
+        createTree(-6, -6);
+        createTree(8, 8);
+        createTree(-8, 6);
+        createTree(7, -7);
+        createTree(-5, 9);
+        createTree(10, -4);
+
+        // 4. Add a small brick structure (like a little house)
+        function createBrickHouse(centerX, centerZ) {
+            const w = 3;
+            const h = 3;
+            // Walls
+            for (let dx = -w; dx <= w; dx++) {
+                for (let dz = -w; dz <= w; dz++) {
+                    // Only perimeter
+                    if (Math.abs(dx) === w || Math.abs(dz) === w) {
+                        for (let y = 1; y <= h; y++) {
+                            // Skip door on one side (dz = -w, dx = 0, y=1,2)
+                            if (dz === -w && dx === 0 && (y === 1 || y === 2)) continue;
+                            const x = centerX + dx;
+                            const z = centerZ + dz;
+                            if (!blocks.has(key(x, y, z))) {
+                                addBlock(x, y, z, materials.brick, true);
+                            }
+                        }
+                    }
+                }
+            }
+            // Roof (flat layer of brick at y=h+1)
+            for (let dx = -w; dx <= w; dx++) {
+                for (let dz = -w; dz <= w; dz++) {
+                    const x = centerX + dx;
+                    const z = centerZ + dz;
+                    if (!blocks.has(key(x, h+1, z))) {
+                        addBlock(x, h+1, z, materials.brick, true);
+                    }
+                }
+            }
+        }
+
+        createBrickHouse(-2, -8);
+
+        // --- Game logic: Raycasting for breaking/placing blocks ---
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2(0, 0); // center of screen
+
+        // Block interaction range
+        const REACH = 8;
+
+        // We need to detect clicks
+        let isLeftMouseDown = false;
+        let isRightMouseDown = false;
+
+        // Prevent context menu for right click
+        window.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        // Mouse down/up events
+        window.addEventListener('mousedown', (e) => {
+            if (!controls.isLocked) return;
+            
+            if (e.button === 0) { // left
+                isLeftMouseDown = true;
+                breakBlock();
+            } else if (e.button === 2) { // right
+                isRightMouseDown = true;
+                placeBlock();
+            }
+        });
+
+        window.addEventListener('mouseup', (e) => {
+            if (e.button === 0) isLeftMouseDown = false;
+            if (e.button === 2) isRightMouseDown = false;
+        });
+
+        // Raycast from camera center
+        function getIntersection() {
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(Array.from(blocks.values()));
+            if (intersects.length > 0 && intersects[0].distance <= REACH) {
+                return intersects[0];
+            }
+            return null;
+        }
+
+        // Break block (left click)
+        function breakBlock() {
+            const hit = getIntersection();
+            if (!hit) return;
+            
+            const obj = hit.object;
+            const pos = obj.position;
+            
+            // Find block coordinates from position (rounding)
+            const x = Math.round(pos.x);
+            const y = Math.round(pos.y);
+            const z = Math.round(pos.z);
+            
+            removeBlock(x, y, z);
+        }
+
+        // Place block (right click)
+        function placeBlock() {
+            const hit = getIntersection();
+            if (!hit) return;
+            
+            const obj = hit.object;
+            const pos = obj.position;
+            
+            // The face normal gives the direction to place the new block
+            const normal = hit.face.normal;
+            
+            // Calculate new block position: existing block position + normal
+            const newX = Math.round(pos.x + normal.x);
+            const newY = Math.round(pos.y + normal.y);
+            const newZ = Math.round(pos.z + normal.z);
+            
+            // Check if there's already a block there (avoid overlap)
+            if (blocks.has(key(newX, newY, newZ))) return;
+            
+            // Place a new block, using the material of the hit block? 
+            // For simplicity, cycle through materials based on what's being looked at? 
+            // But let's just place grass for now, or wood? We'll use a simple method: 
+            // Place a block of the same type as the one we hit? Actually, let's make it more fun:
+            // Use a random material? Or a fixed one? Let's do grass, wood, stone, brick in rotation? 
+            // I'll implement a material selection based on hit block's material color? That's complex.
+            // For simplicity: place grass, but allow cycling with number keys? Not requested.
+            // So default to grass for now, but maybe if we hit wood, place wood? That could be neat.
+            // Let's determine material by looking at the hit object's material color (hacky but works).
+            // But to keep it simple and predictable: always place grass? Actually let's do:
+            // If hit block is wood, place wood; if brick, place brick; else place grass.
+            let materialToPlace = materials.grass;
+            if (obj.material === materials.wood) materialToPlace = materials.wood;
+            else if (obj.material === materials.brick) materialToPlace = materials.brick;
+            else if (obj.material === materials.stone) materialToPlace = materials.stone;
+            else if (obj.material === materials.sand) materialToPlace = materials.sand;
+            else if (obj.material === materials.dirt) materialToPlace = materials.dirt;
+            else if (obj.material === materials.leaves) materialToPlace = materials.leaves;
+            
+            addBlock(newX, newY, newZ, materialToPlace, true);
+        }
+
+        // --- Player movement (physics and controls) ---
+        const moveSpeed = 0.15;
+        const jumpForce = 0.25;
+        const gravity = 0.01;
+        
+        let velocity = new THREE.Vector3(0, 0, 0);
+        let canJump = false;
+        
+        // Key states
+        const keyStates = {
+            w: false, a: false, s: false, d: false, space: false
+        };
+        
+        window.addEventListener('keydown', (e) => {
+            if (!controls.isLocked) return;
+            switch(e.code) {
+                case 'KeyW': keyStates.w = true; break;
+                case 'KeyA': keyStates.a = true; break;
+                case 'KeyS': keyStates.s = true; break;
+                case 'KeyD': keyStates.d = true; break;
+                case 'Space': keyStates.space = true; e.preventDefault(); break;
+            }
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            switch(e.code) {
+                case 'KeyW': keyStates.w = false; break;
+                case 'KeyA': keyStates.a = false; break;
+                case 'KeyS': keyStates.s = false; break;
+                case 'KeyD': keyStates.d = false; break;
+                case 'Space': keyStates.space = false; e.preventDefault(); break;
+            }
+        });
+
+        // Helper to check if there's a block at a given world position (rounded)
+        function isSolidBlock(x, y, z) {
+            // Round to nearest integer coordinates
+            const rx = Math.round(x);
+            const ry = Math.round(y);
+            const rz = Math.round(z);
+            return blocks.has(key(rx, ry, rz));
+        }
+
+        // Player collision detection (simple AABB)
+        function checkCollision(position) {
+            const playerRadius = 0.4;
+            const playerHeight = 1.8; // camera is at eye level ~1.8
+            
+            // Check blocks around the player's feet and body
+            const minX = Math.floor(position.x - playerRadius);
+            const maxX = Math.ceil(position.x + playerRadius);
+            const minY = Math.floor(position.y - 1.6); // feet level
+            const maxY = Math.ceil(position.y + 0.2);
+            const minZ = Math.floor(position.z - playerRadius);
+            const maxZ = Math.ceil(position.z + playerRadius);
+            
+            for (let x = minX; x <= maxX; x++) {
+                for (let y = minY; y <= maxY; y++) {
+                    for (let z = minZ; z <= maxZ; z++) {
+                        if (blocks.has(key(x, y, z))) {
+                            // Simple AABB collision
+                            const blockMin = new THREE.Vector3(x - 0.5, y - 0.5, z - 0.5);
+                            const blockMax = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5);
+                            
+                            const playerMin = new THREE.Vector3(position.x - playerRadius, position.y - 1.6, position.z - playerRadius);
+                            const playerMax = new THREE.Vector3(position.x + playerRadius, position.y + 0.2, position.z + playerRadius);
+                            
+                            if (playerMin.x < blockMax.x && playerMax.x > blockMin.x &&
+                                playerMin.y < blockMax.y && playerMax.y > blockMin.y &&
+                                playerMin.z < blockMax.z && playerMax.z > blockMin.z) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        // --- Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (controls.isLocked) {
+                // Apply movement based on key states
+                const direction = new THREE.Vector3();
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                forward.y = 0;
+                forward.normalize();
+                
+                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+                right.y = 0;
+                right.normalize();
+                
+                if (keyStates.w) direction.add(forward);
+                if (keyStates.s) direction.sub(forward);
+                if (keyStates.d) direction.add(right);
+                if (keyStates.a) direction.sub(right);
+                
+                if (direction.length() > 0) {
+                    direction.normalize();
+                    const moveDelta = direction.clone().multiplyScalar(moveSpeed);
+                    
+                    // Try moving along X and Z separately for sliding collision
+                    const newPosX = camera.position.clone();
+                    newPosX.x += moveDelta.x;
+                    if (!checkCollision(newPosX)) {
+                        camera.position.x += moveDelta.x;
+                    }
+                    
+                    const newPosZ = camera.position.clone();
+                    newPosZ.z += moveDelta.z;
+                    if (!checkCollision(newPosZ)) {
+                        camera.position.z += moveDelta.z;
+                    }
+                }
+                
+                // Jumping
+                if (keyStates.space && canJump) {
+                    velocity.y = jumpForce;
+                    canJump = false;
+                }
+                
+                // Apply gravity
+                velocity.y -= gravity;
+                const newPosY = camera.position.clone();
+                newPosY.y += velocity.y;
+                
+                if (!checkCollision(newPosY)) {
+                    camera.position.y += velocity.y;
+                } else {
+                    // Collision: stop vertical velocity and allow jump if landing on ground
+                    if (velocity.y < 0) {
+                        canJump = true;
+                    }
+                    velocity.y = 0;
+                }
+                
+                // Simple ground check for jump: if standing on something
+                const groundCheckPos = camera.position.clone();
+                groundCheckPos.y -= 0.5;
+                if (isSolidBlock(groundCheckPos.x, groundCheckPos.y - 0.8, groundCheckPos.z)) {
+                    canJump = true;
+                }
+                
+                // Keep camera within reasonable bounds (not falling off the world)
+                if (camera.position.y < -10) {
+                    camera.position.set(0, 5, 0);
+                    velocity.set(0, 0, 0);
+                }
+            }
+            
+            renderer.render(scene, camera);
+        }
+
+        // Start the animation loop
+        animate();
+
+        // Window resize handler
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Instructions overlay after pointer lock
+        console.log('MiniCraft started! Click to play.');
+    </script>
+</body>
+</html>
